@@ -1,0 +1,8 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="../testy/testy.vcxproj" Id="4a7f10af-4419-45bc-a76b-60dd9f45fc13" />
+  <Project Path="License Revoked.vcxproj" Id="f80068ba-6260-4d65-bb04-86f59670a59c" />
+</Solution>

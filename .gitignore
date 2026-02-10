@@ -1,0 +1,30 @@
+# --- Visual Studio cache & temp files ---
+.vs/
+*.user
+*.suo
+*.ups
+*.sln.docstates
+
+# --- Build results (Binaries & Object files) ---
+x64/
+Debug/
+Release/
+bin/
+obj/
+
+# --- Poœrednie pliki kompilacji ---
+*.ipch
+*.iobj
+*.ipdb
+*.tlog
+*.idb
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.exe
+
+# --- Windows system files ---
+Thumbs.db
+Desktop.ini
