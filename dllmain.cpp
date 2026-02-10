@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// LICENSE REVOKED - Version: 60.0 (LOCALIZATION SUPPORT)
+// LICENSE REVOKED - Version: 66.0 (DIRECTX SCANCODE INPUT FIX)
 // ==============================================================================
 
 #include <windows.h>
@@ -26,81 +26,124 @@
 #pragma comment(lib, "Winmm.lib") 
 
 // ==============================================================================
-// 1. LOCALIZATION SETTINGS
+// 1. LOCALIZATION STORAGE
 // ==============================================================================
-
-// --- ODKOMENTUJ poniższą linię, aby uzyskać wersję POLSKĄ ---
-// #define LANGUAGE_PL 
-
-#ifdef LANGUAGE_PL
 namespace Strings {
     namespace UI {
-        constexpr const char* GAME_OVER_TITLE = "DECYZJA ADMINISTRACYJNA";
-        constexpr const char* FINE_TITLE = "WYKROCZENIE DROGOWE";
-        constexpr const char* RESET_TITLE = "CZYSTE KONTO";
-
-        constexpr const char* FINE_BODY_PRE = "Naliczono punkty karne. Stan licznika: ";
-        constexpr const char* RESET_BODY = "Brak naruszen przez 14 dni. Punkty zresetowane do 0.";
-
-        constexpr const char* LEGAL_TEXT =
-            "Systemy kontroli ruchu drogowego wykryly przekroczenie limitu 24 punktow karnych.\n\n"
-            "Twoje uprawnienia do kierowania pojazdami zostaly zawieszone w trybie natychmiastowym. "
-            "Dalsza jazda jest niemozliwa.\n\n"
-            "Status Profilu: ZABLOKOWANY";
-    }
-    namespace Log {
-        constexpr const char* INIT = "Zaladowano License Revoked v60.0 (PL).";
-        constexpr const char* CHANNEL_OK = "Kanal czasu zarejestrowany poprawnie.";
-        constexpr const char* CHANNEL_FAIL = "BLAD: Nie udalo sie zarejestrowac kanalu czasu!";
-        constexpr const char* PROFILE_LOAD = "Wczytano profil: ";
-        constexpr const char* RESET_DONE = "Czyste konto! Punkty zresetowane (minelo 14 dni).";
-        constexpr const char* FINE_DETECT = "Wykryto mandat: ";
-        constexpr const char* BAN_TRIGGER = "WYKRYTO BAN -> INICJACJA BLOKADY GRY";
-        constexpr const char* TIME_WARN = "Ostrzezenie: Dodawanie punktow przy Czasie=0";
-    }
-}
-#else
-// DEFAULT: ENGLISH
-namespace Strings {
-    namespace UI {
-        constexpr const char* GAME_OVER_TITLE = "ADMINISTRATIVE DECISION";
-        constexpr const char* FINE_TITLE = "TRAFFIC OFFENCE";
-        constexpr const char* RESET_TITLE = "CLEAN DRIVING RECORD";
-
-        constexpr const char* FINE_BODY_PRE = "Penalty points added. Current status: ";
-        constexpr const char* RESET_BODY = "No violations in 14 days. Points reset to 0.";
-
-        constexpr const char* LEGAL_TEXT =
-            "Traffic enforcement systems have detected that you have exceeded the limit of 24 penalty points.\n\n"
+        const char* GAME_OVER_TITLE = "ADMINISTRATIVE DECISION";
+        const char* FINE_TITLE = "TRAFFIC OFFENCE";
+        const char* RESET_TITLE = "CLEAN DRIVING RECORD";
+        const char* FINE_BODY_PRE = "Penalty points added. Current status: ";
+        const char* RESET_BODY = "No violations for the required period. Points reset to 0.";
+        const char* LEGAL_TEXT = "Traffic enforcement systems have detected that you have exceeded the penalty points limit.\n\n"
             "Your driving privileges are hereby suspended with immediate effect. "
             "Further operation of the vehicle is prohibited.\n\n"
             "Profile Status: LOCKED";
     }
     namespace Log {
-        constexpr const char* INIT = "License Revoked v60.0 Loaded (EN).";
-        constexpr const char* CHANNEL_OK = "Time channel registered successfully.";
-        constexpr const char* CHANNEL_FAIL = "ERROR: Failed to register time channel!";
-        constexpr const char* PROFILE_LOAD = "Loaded profile: ";
-        constexpr const char* RESET_DONE = "Clean record! Points reset (14 days passed).";
-        constexpr const char* FINE_DETECT = "Fine detected: ";
-        constexpr const char* BAN_TRIGGER = "BAN DETECTED -> INITIATING GAME OVER SEQUENCE";
-        constexpr const char* TIME_WARN = "Warning: Adding points with Time=0";
+        const char* INIT = "License Revoked v66.0 Loaded (DX Input Fix).";
+        const char* CONFIG_LOAD = "Configuration loaded from .ini file.";
+        const char* CONFIG_FAIL = "Config .ini not found - using defaults (EN).";
+        const char* CHANNEL_OK = "Time channel registered successfully.";
+        const char* CHANNEL_FAIL = "ERROR: Failed to register time channel!";
+        const char* PROFILE_LOAD = "Loaded profile: ";
+        const char* RESET_DONE = "Clean record! Points reset.";
+        const char* FINE_DETECT = "Fine detected: ";
+        const char* BAN_TRIGGER = "BAN DETECTED -> FORCE HANDBRAKE (SCANCODE) -> GAME OVER";
+        const char* TIME_WARN = "Warning: Adding points with Time=0";
     }
 }
-#endif
+
+scs_log_t game_log = nullptr;
+void Log(const std::string& msg) { if (game_log) game_log(SCS_LOG_TYPE_message, ("[LR] " + msg).c_str()); }
+void LogErr(const std::string& msg) { if (game_log) game_log(SCS_LOG_TYPE_error, ("[LR] ERROR: " + msg).c_str()); }
 
 // ==============================================================================
-// 2. CONFIGURATION
+// 2. CONFIGURATION & INI LOADING
 // ==============================================================================
 struct Config {
-    static const int NOTIFICATION_DURATION = 3000;
-    static const int GAME_OVER_DURATION = 10000;
     static const scs_u32_t SCS_U32_NIL = (scs_u32_t)(-1);
     static const scs_u32_t CHANNEL_FLAG_NONE = 0x00000000;
 
-    // 14 DNI (14 * 24 * 60 = 20160)
-    static const unsigned int RESET_TIME_MIN = 20160;
+    static int LIMIT;
+    static int RESET_DAYS;
+    static std::string LANGUAGE;
+
+    static int PTS_COLLISION;
+    static int PTS_WRONG_WAY;
+    static int PTS_RED_LIGHT;
+    static int PTS_SPEEDING;
+    static int PTS_OTHER;
+
+    static const int NOTIFICATION_DURATION = 3000;
+    static const int GAME_OVER_DURATION = 10000;
+    static constexpr const char* SOUND_FILE = "gameover.wav";
     static constexpr const char* FONT_NAME = "Roboto Condensed";
+
+    static void SetPolish() {
+        Strings::UI::GAME_OVER_TITLE = "DECYZJA ADMINISTRACYJNA";
+        Strings::UI::FINE_TITLE = "WYKROCZENIE DROGOWE";
+        Strings::UI::RESET_TITLE = "CZYSTE KONTO";
+        Strings::UI::FINE_BODY_PRE = "Naliczono punkty karne. Stan licznika: ";
+        Strings::UI::RESET_BODY = "Brak naruszen przez wymagany czas. Punkty zresetowane.";
+        Strings::UI::LEGAL_TEXT = "Systemy kontroli ruchu drogowego wykryly przekroczenie limitu punktow karnych.\n\n"
+            "Twoje uprawnienia do kierowania pojazdami zostaly zawieszone w trybie natychmiastowym. "
+            "Dalsza jazda jest niemozliwa.\n\n"
+            "Status Profilu: ZABLOKOWANY";
+
+        Strings::Log::INIT = "Zaladowano License Revoked v66.0 (PL DX Input).";
+        Strings::Log::CONFIG_LOAD = "Wczytano konfiguracje z pliku .ini";
+        Strings::Log::CONFIG_FAIL = "Nie znaleziono pliku .ini - uzyto wartosci domyslnych.";
+        Strings::Log::CHANNEL_OK = "Kanal czasu zarejestrowany poprawnie.";
+        Strings::Log::CHANNEL_FAIL = "BLAD: Nie udalo sie zarejestrowac kanalu czasu!";
+        Strings::Log::PROFILE_LOAD = "Wczytano profil: ";
+        Strings::Log::RESET_DONE = "Czyste konto! Punkty zresetowane.";
+        Strings::Log::FINE_DETECT = "Wykryto mandat: ";
+        Strings::Log::BAN_TRIGGER = "WYKRYTO BAN -> WYMUSZONO HAMULEC (SCANCODE) -> BLOKADA";
+        Strings::Log::TIME_WARN = "Ostrzezenie: Dodawanie punktow przy Czasie=0";
+    }
+
+    static void Load() {
+        char path[MAX_PATH];
+        HMODULE hm = NULL;
+        if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)&Load, &hm) == 0) {
+            LogErr("Failed to get module handle for config path.");
+            return;
+        }
+        GetModuleFileNameA(hm, path, sizeof(path));
+
+        std::string configPath = path;
+        size_t lastDot = configPath.find_last_of(".");
+        if (lastDot != std::string::npos) configPath = configPath.substr(0, lastDot);
+        configPath += ".ini";
+
+        std::ifstream f(configPath.c_str());
+        if (!f.good()) {
+            Log(Strings::Log::CONFIG_FAIL);
+            return;
+        }
+        f.close();
+
+        char langBuf[32];
+        GetPrivateProfileStringA("General", "Language", "EN", langBuf, 32, configPath.c_str());
+        LANGUAGE = std::string(langBuf);
+
+        if (LANGUAGE == "PL" || LANGUAGE == "pl") {
+            SetPolish();
+        }
+
+        LIMIT = GetPrivateProfileIntA("General", "MaxPoints", 24, configPath.c_str());
+        RESET_DAYS = GetPrivateProfileIntA("General", "ResetDays", 14, configPath.c_str());
+
+        PTS_COLLISION = GetPrivateProfileIntA("Offenses", "Collision", 10, configPath.c_str());
+        PTS_WRONG_WAY = GetPrivateProfileIntA("Offenses", "WrongWay", 8, configPath.c_str());
+        PTS_RED_LIGHT = GetPrivateProfileIntA("Offenses", "RedLight", 6, configPath.c_str());
+        PTS_SPEEDING = GetPrivateProfileIntA("Offenses", "Speeding", 2, configPath.c_str());
+        PTS_OTHER = GetPrivateProfileIntA("Offenses", "Other", 1, configPath.c_str());
+
+        Log(Strings::Log::CONFIG_LOAD);
+        Log("Lang: " + LANGUAGE + ", Limit: " + std::to_string(LIMIT) + ", ResetDays: " + std::to_string(RESET_DAYS));
+    }
 
     struct Colors {
         static const COLORREF BG = RGB(20, 20, 22);
@@ -114,17 +157,21 @@ struct Config {
     };
 };
 
-// --- LOGGING HELPER ---
-scs_log_t game_log = nullptr;
-void Log(const std::string& msg) { if (game_log) game_log(SCS_LOG_TYPE_message, ("[LR] " + msg).c_str()); }
-void LogErr(const std::string& msg) { if (game_log) game_log(SCS_LOG_TYPE_error, ("[LR] ERROR: " + msg).c_str()); }
+int Config::LIMIT = 24;
+int Config::RESET_DAYS = 14;
+std::string Config::LANGUAGE = "EN";
+int Config::PTS_COLLISION = 10;
+int Config::PTS_WRONG_WAY = 8;
+int Config::PTS_RED_LIGHT = 6;
+int Config::PTS_SPEEDING = 2;
+int Config::PTS_OTHER = 1;
+
 
 // ==============================================================================
 // 3. LOGIC CLASS
 // ==============================================================================
 class LicenseRules {
 public:
-    static const int LIMIT = 24;
     int points = 0;
     unsigned int lastFineTime = 0;
     bool isBanned = false;
@@ -148,7 +195,10 @@ public:
             lastFineTime = now;
             return TimeResult::NONE;
         }
-        if (points > 0 && lastFineTime > 0 && (now > lastFineTime + Config::RESET_TIME_MIN)) {
+
+        unsigned int resetMinutes = Config::RESET_DAYS * 24 * 60;
+
+        if (points > 0 && lastFineTime > 0 && (now > lastFineTime + resetMinutes)) {
             points = 0;
             lastFineTime = now;
             isBanned = false;
@@ -159,7 +209,7 @@ public:
 
 private:
     void CheckBan() {
-        if (points >= LIMIT) isBanned = true;
+        if (points >= Config::LIMIT) isBanned = true;
     }
 };
 
@@ -170,10 +220,8 @@ class GameState {
 private:
     std::mutex mtx;
     LicenseRules rules;
-
     scs_u32_t currentGameTime = 0;
     std::string licensePlate = "";
-
     bool showOverlay = false;
     bool gameOverTriggered = false;
     bool isResetNotification = false;
@@ -189,8 +237,9 @@ private:
     void CheckBanTrigger() {
         if (rules.isBanned && !gameOverTriggered) {
             gameOverTriggered = true;
-            showOverlay = true;
             gameOverStartTime = GetTickCount();
+            showOverlay = true;
+
             Log(Strings::Log::BAN_TRIGGER);
         }
     }
@@ -202,7 +251,6 @@ public:
         std::string filename = GetSaveFileName();
         std::ifstream file(filename);
         std::lock_guard<std::mutex> lock(mtx);
-
         int p = 0; unsigned int t = 0;
         if (file.is_open()) {
             file >> p >> t;
@@ -226,15 +274,12 @@ public:
     void UpdateTime(scs_u32_t time) {
         std::lock_guard<std::mutex> lock(mtx);
         currentGameTime = time;
-
         auto result = rules.UpdateTime(time);
-
         if (result == LicenseRules::TimeResult::RESET_PERFORMED) {
             showOverlay = true;
             isResetNotification = true;
             notifyStartTime = GetTickCount();
             Log(Strings::Log::RESET_DONE);
-
             std::ofstream file(licensePlate.empty() ? "lr_save_unknown.txt" : "lr_save_" + licensePlate + ".txt");
             if (file.is_open()) file << rules.points << " " << rules.lastFineTime;
         }
@@ -243,11 +288,13 @@ public:
     void AddPoints(int amount, const std::string& reason) {
         {
             std::lock_guard<std::mutex> lock(mtx);
+            if (amount <= 0) {
+                Log("Fine detected but ignored (Points=0 in config): " + reason);
+                return;
+            }
 
             if (currentGameTime == 0) LogErr(Strings::Log::TIME_WARN);
-
             rules.AddPoints(amount, currentGameTime);
-
             Log(std::string(Strings::Log::FINE_DETECT) + reason + ". Pts: " + std::to_string(rules.points));
 
             CheckBanTrigger();
@@ -286,7 +333,6 @@ public:
         snap.isReset = isResetNotification;
         snap.pts = rules.points;
         snap.msRemaining = 0;
-
         DWORD now = GetTickCount();
         if (snap.isGameOver) {
             snap.msRemaining = (long long)Config::GAME_OVER_DURATION - (long long)(now - gameOverStartTime);
@@ -302,21 +348,16 @@ public:
 };
 
 // ==============================================================================
-// 5. RENDERER
+// 5. RENDERER & WINDOWING
 // ==============================================================================
 class Renderer {
     HFONT hTitle = NULL, hBody = NULL, hIcon = NULL;
-
-    HFONT F(int s, int w, const char* n) {
-        return CreateFontA(s, 0, 0, 0, w, 0, 0, 0, 1, 0, 0, 5, 0, n);
-    }
-
+    HFONT F(int s, int w, const char* n) { return CreateFontA(s, 0, 0, 0, w, 0, 0, 0, 1, 0, 0, 5, 0, n); }
     void RoundRectDraw(HDC hdc, int x, int y, int w, int h, int r, COLORREF c) {
         HBRUSH b = CreateSolidBrush(c); HPEN p = CreatePen(PS_NULL, 0, 0);
         SelectObject(hdc, b); SelectObject(hdc, p); RoundRect(hdc, x, y, x + w, y + h, r, r);
         DeleteObject(b); DeleteObject(p);
     }
-
 public:
     void Draw(HDC hdc, int w, int h, const GameState::RenderSnapshot& d) {
         RECT full = { 0,0,w,h }; FillRect(hdc, &full, (HBRUSH)GetStockObject(BLACK_BRUSH));
@@ -335,40 +376,30 @@ public:
             RoundRectDraw(hdc, 0, 0, w, h, 6, Config::Colors::WARN_BG);
             HBRUSH acc = CreateSolidBrush(Config::Colors::WARN_ACCENT);
             RECT rA = { 0,h - 4,w,h }; FillRect(hdc, &rA, acc); DeleteObject(acc);
-
             HPEN pen = CreatePen(PS_SOLID, 3, Config::Colors::WARN_ACCENT); SelectObject(hdc, pen); SelectObject(hdc, GetStockObject(NULL_BRUSH));
             Ellipse(hdc, 25, (h - 44) / 2, 25 + 44, (h - 44) / 2 + 44); DeleteObject(pen);
-
             SelectObject(hdc, hIcon); SetTextColor(hdc, Config::Colors::WARN_ACCENT);
             RECT rI = { 25, (h - 44) / 2, 69, (h - 44) / 2 + 48 }; DrawTextA(hdc, "!", -1, &rI, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
             static HFONT hS_T = F(21, 400, Config::FONT_NAME); static HFONT hS_B = F(19, 400, Config::FONT_NAME);
             int tx = 90, tw = w - 100;
             SelectObject(hdc, hS_T); SetTextColor(hdc, RGB(255, 255, 255));
             std::string t = d.isReset ? Strings::UI::RESET_TITLE : Strings::UI::FINE_TITLE;
             RECT r1 = { tx, 20, tx + tw, 50 }; DrawTextA(hdc, t.c_str(), -1, &r1, DT_LEFT | DT_TOP);
-
             SelectObject(hdc, hS_B); SetTextColor(hdc, RGB(220, 220, 220));
-            std::string b = d.isReset ? Strings::UI::RESET_BODY : (std::string(Strings::UI::FINE_BODY_PRE) + std::to_string(d.pts) + " / 24");
+            std::string b = d.isReset ? Strings::UI::RESET_BODY : (std::string(Strings::UI::FINE_BODY_PRE) + std::to_string(d.pts) + " / " + std::to_string(Config::LIMIT));
             RECT r2 = { tx, 50, tx + tw, 90 }; DrawTextA(hdc, b.c_str(), -1, &r2, DT_LEFT | DT_TOP | DT_WORDBREAK);
         }
     }
 };
 
-// ==============================================================================
-// 6. WINDOWING
-// ==============================================================================
 HWND hOverlayWnd = NULL;
 volatile bool g_running = true;
 Renderer g_renderer;
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     if (uMsg == WM_PAINT) {
-        PAINTSTRUCT ps;
-        HDC hdc = BeginPaint(hwnd, &ps);
-        RECT r; GetClientRect(hwnd, &r);
+        PAINTSTRUCT ps; HDC hdc = BeginPaint(hwnd, &ps); RECT r; GetClientRect(hwnd, &r);
         HDC mdc = CreateCompatibleDC(hdc); HBITMAP bm = CreateCompatibleBitmap(hdc, r.right, r.bottom); SelectObject(mdc, bm);
-
         auto data = GameState::Instance().GetSnapshot();
         if (data.show) {
             g_renderer.Draw(mdc, r.right, r.bottom, data);
@@ -377,7 +408,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         else {
             RECT clr = { 0,0,r.right,r.bottom }; HBRUSH b = CreateSolidBrush(0); FillRect(mdc, &clr, b); DeleteObject(b);
         }
-
         BitBlt(hdc, 0, 0, r.right, r.bottom, mdc, 0, 0, SRCCOPY);
         DeleteObject(bm); DeleteDC(mdc); EndPaint(hwnd, &ps); return 0;
     }
@@ -390,13 +420,11 @@ DWORD WINAPI OverlayThread(LPVOID) {
     RegisterClassA(&wc);
     hOverlayWnd = CreateWindowExA(WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW, CN, "LR", WS_POPUP, 0, 0, 100, 100, NULL, NULL, wc.hInstance, NULL);
     SetLayeredWindowAttributes(hOverlayWnd, 0, 255, LWA_ALPHA);
-
     MSG msg;
     while (g_running) {
         HWND hGame = FindWindowA(NULL, "Euro Truck Simulator 2");
         if (!hGame) hGame = FindWindowA(NULL, "American Truck Simulator");
         if (!hGame) { Sleep(100); continue; }
-
         auto d = GameState::Instance().GetSnapshot();
         if (d.show) {
             if (!IsWindowVisible(hOverlayWnd)) ShowWindow(hOverlayWnd, SW_SHOWNA);
@@ -406,10 +434,8 @@ DWORD WINAPI OverlayThread(LPVOID) {
             int h = d.isGameOver ? 540 : 110;
             int tx = rGame.left + (gw - w) / 2;
             int ty = d.isGameOver ? rGame.top + (gh - h) / 2 : rGame.top + 100;
-
             SetWindowPos(hOverlayWnd, HWND_TOPMOST, tx, ty, w, h, SWP_NOACTIVATE);
             InvalidateRect(hOverlayWnd, NULL, FALSE);
-
             if (d.isGameOver) {
                 if (GetForegroundWindow() != hOverlayWnd) { SetForegroundWindow(hOverlayWnd); SetFocus(hOverlayWnd); SetCapture(hOverlayWnd); }
                 RECT cr; GetWindowRect(hOverlayWnd, &cr); ClipCursor(&cr);
@@ -420,7 +446,6 @@ DWORD WINAPI OverlayThread(LPVOID) {
             if (IsWindowVisible(hOverlayWnd)) ShowWindow(hOverlayWnd, SW_HIDE);
             ClipCursor(NULL);
         }
-
         while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessageA(&msg); }
         Sleep(16);
     }
@@ -438,15 +463,21 @@ SCSAPI_VOID t_game(const scs_event_t, const void* i, const scs_context_t) {
     auto e = (const scs_telemetry_gameplay_event_t*)i;
     if (!strcmp(e->id, "player.fined")) {
         std::string off = "unknown"; for (auto a = e->attributes; a->name; a++) if (!strcmp(a->name, "fine.offence")) off = a->value.value_string.value;
-        int pts = 1; if (off == "crash") pts = 10; else if (off == "wrong_way") pts = 8; else if (off == "red_signal") pts = 6; else if (off == "speeding" || off == "speeding_camera") pts = 2;
+        int pts = Config::PTS_OTHER;
+        if (off == "crash") pts = Config::PTS_COLLISION;
+        else if (off == "wrong_way") pts = Config::PTS_WRONG_WAY;
+        else if (off == "red_signal") pts = Config::PTS_RED_LIGHT;
+        else if (off == "speeding" || off == "speeding_camera") pts = Config::PTS_SPEEDING;
         GameState::Instance().AddPoints(pts, off);
     }
 }
 
-SCSAPI_RESULT scs_telemetry_init(const scs_u32_t, const scs_telemetry_init_params_t* p) {
+SCSAPI_RESULT scs_telemetry_init(const scs_u32_t version, const scs_telemetry_init_params_t* p) {
     auto v = (const scs_telemetry_init_params_v100_t*)p; game_log = v->common.log; g_running = true;
-    Log(Strings::Log::INIT);
 
+    Config::Load();
+
+    Log(Strings::Log::INIT);
     if (v->register_for_channel("game.time", Config::SCS_U32_NIL, SCS_VALUE_TYPE_u32, Config::CHANNEL_FLAG_NONE, t_time, nullptr) != SCS_RESULT_ok) LogErr(Strings::Log::CHANNEL_FAIL);
     else Log(Strings::Log::CHANNEL_OK);
 
