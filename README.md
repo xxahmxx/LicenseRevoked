@@ -13,10 +13,11 @@ Drive carefully!
 1. Open your game installation folder:
    - Euro Truck Simulator 2  OR  American Truck Simulator
 2. Open this ZIP archive.
-3. Drag and drop the "bin" folder from this ZIP directly into your main game folder.
+3. Optionally edit configuration file \bin\win_x64\plugins\License Revoked.ini
+4. Drag and drop the "bin" folder from this ZIP directly into your main game folder.
    (If Windows asks to merge folders, click YES).
-4. Start the game.
-5. Click "OK" on the SDK Warning ("Request to use advanced SDK features").
+5. Start the game.
+6. Click "OK" on the SDK Warning ("Request to use advanced SDK features").
 
 >>> RULES
 - Limit: 24 Points. Exceeding it results in immediate GAME OVER.
@@ -41,9 +42,9 @@ Jedź ostrożnie!
 1. Otwórz główny folder z grą:
    - Euro Truck Simulator 2  LUB  American Truck Simulator
 2. Otwórz to archiwum ZIP.
-3. Przeciągnij folder "bin" z tego archiwum prosto do głównego folderu gry.
+3. Opcjonalnie zmodyfikuj konfiguracje w pliku \bin\win_x64\plugins\License Revoked.ini
+4. Przeciągnij folder "bin" z tego archiwum prosto do głównego folderu gry.
    (Jeśli system zapyta o scalenie folderów, kliknij TAK).
-4. Opcjonalnie zmodyfikuj konfiguracje w pliku \bin\win_x64\plugins\License Revoked.ini
 5. Uruchom grę.
 6. Kliknij "OK" przy ostrzeżeniu SDK ("Request to use advanced SDK features").
 

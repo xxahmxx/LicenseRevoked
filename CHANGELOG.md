@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.2.0.x] - 2026-02-11
+## [1.2.0.13] - 2026-02-11
 ### Fixed
 - **Stability:** Fixed a critical breaking issue that occurred after the "Game Over" sequence was triggered.
 - **Rendering:** Eliminated screen flickering when closing the game by implementing thread synchronization and event-driven shutdown logic.
