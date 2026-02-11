@@ -1,5 +1,5 @@
 ﻿// ==============================================================================
-// LICENSE REVOKED - Version: 66.0 (DIRECTX SCANCODE INPUT FIX)
+// LICENSE REVOKED - Version: 1.6 (EVENT DRIVEN NO-FLICKER & AUTO-EXIT)
 // ==============================================================================
 
 #include <windows.h>
@@ -38,10 +38,11 @@ namespace Strings {
         const char* LEGAL_TEXT = "Traffic enforcement systems have detected that you have exceeded the penalty points limit.\n\n"
             "Your driving privileges are hereby suspended with immediate effect. "
             "Further operation of the vehicle is prohibited.\n\n"
-            "Profile Status: LOCKED";
+            "Profile Status: LOCKED\n"
+            "CLOSING GAME...";
     }
     namespace Log {
-        const char* INIT = "License Revoked v66.0 Loaded (DX Input Fix).";
+        const char* INIT = "License Revoked v1.6 Loaded (Event Driven).";
         const char* CONFIG_LOAD = "Configuration loaded from .ini file.";
         const char* CONFIG_FAIL = "Config .ini not found - using defaults (EN).";
         const char* CHANNEL_OK = "Time channel registered successfully.";
@@ -49,7 +50,8 @@ namespace Strings {
         const char* PROFILE_LOAD = "Loaded profile: ";
         const char* RESET_DONE = "Clean record! Points reset.";
         const char* FINE_DETECT = "Fine detected: ";
-        const char* BAN_TRIGGER = "BAN DETECTED -> FORCE HANDBRAKE (SCANCODE) -> GAME OVER";
+        const char* BAN_Queued = "BAN DETECTED -> QUEUEING HANDBRAKE SEQUENCE";
+        const char* BAN_EXEC = "EXECUTING BAN SEQUENCE";
         const char* TIME_WARN = "Warning: Adding points with Time=0";
     }
 }
@@ -76,7 +78,7 @@ struct Config {
     static int PTS_OTHER;
 
     static const int NOTIFICATION_DURATION = 3000;
-    static const int GAME_OVER_DURATION = 10000;
+    static const int GAME_OVER_DURATION = 8000; // 8 seconds before exit
     static constexpr const char* SOUND_FILE = "gameover.wav";
     static constexpr const char* FONT_NAME = "Roboto Condensed";
 
@@ -89,9 +91,10 @@ struct Config {
         Strings::UI::LEGAL_TEXT = "Systemy kontroli ruchu drogowego wykryly przekroczenie limitu punktow karnych.\n\n"
             "Twoje uprawnienia do kierowania pojazdami zostaly zawieszone w trybie natychmiastowym. "
             "Dalsza jazda jest niemozliwa.\n\n"
-            "Status Profilu: ZABLOKOWANY";
+            "Status Profilu: ZABLOKOWANY\n"
+            "ZAMYKANIE GRY...";
 
-        Strings::Log::INIT = "Zaladowano License Revoked v66.0 (PL DX Input).";
+        Strings::Log::INIT = "Zaladowano License Revoked v1.6 (PL).";
         Strings::Log::CONFIG_LOAD = "Wczytano konfiguracje z pliku .ini";
         Strings::Log::CONFIG_FAIL = "Nie znaleziono pliku .ini - uzyto wartosci domyslnych.";
         Strings::Log::CHANNEL_OK = "Kanal czasu zarejestrowany poprawnie.";
@@ -99,7 +102,8 @@ struct Config {
         Strings::Log::PROFILE_LOAD = "Wczytano profil: ";
         Strings::Log::RESET_DONE = "Czyste konto! Punkty zresetowane.";
         Strings::Log::FINE_DETECT = "Wykryto mandat: ";
-        Strings::Log::BAN_TRIGGER = "WYKRYTO BAN -> WYMUSZONO HAMULEC (SCANCODE) -> BLOKADA";
+        Strings::Log::BAN_Queued = "WYKRYTO BAN -> KOLEJKOWANIE SEKWENCJI HAMOWANIA";
+        Strings::Log::BAN_EXEC = "WYKONYWANIE SEKWENCJI BANA";
         Strings::Log::TIME_WARN = "Ostrzezenie: Dodawanie punktow przy Czasie=0";
     }
 
@@ -128,9 +132,7 @@ struct Config {
         GetPrivateProfileStringA("General", "Language", "EN", langBuf, 32, configPath.c_str());
         LANGUAGE = std::string(langBuf);
 
-        if (LANGUAGE == "PL" || LANGUAGE == "pl") {
-            SetPolish();
-        }
+        if (LANGUAGE == "PL" || LANGUAGE == "pl") SetPolish();
 
         LIMIT = GetPrivateProfileIntA("General", "MaxPoints", 24, configPath.c_str());
         RESET_DAYS = GetPrivateProfileIntA("General", "ResetDays", 14, configPath.c_str());
@@ -142,7 +144,7 @@ struct Config {
         PTS_OTHER = GetPrivateProfileIntA("Offenses", "Other", 1, configPath.c_str());
 
         Log(Strings::Log::CONFIG_LOAD);
-        Log("Lang: " + LANGUAGE + ", Limit: " + std::to_string(LIMIT) + ", ResetDays: " + std::to_string(RESET_DAYS));
+        Log("Lang: " + LANGUAGE + ", Limit: " + std::to_string(LIMIT));
     }
 
     struct Colors {
@@ -195,9 +197,7 @@ public:
             lastFineTime = now;
             return TimeResult::NONE;
         }
-
         unsigned int resetMinutes = Config::RESET_DAYS * 24 * 60;
-
         if (points > 0 && lastFineTime > 0 && (now > lastFineTime + resetMinutes)) {
             points = 0;
             lastFineTime = now;
@@ -222,9 +222,12 @@ private:
     LicenseRules rules;
     scs_u32_t currentGameTime = 0;
     std::string licensePlate = "";
+
     bool showOverlay = false;
     bool gameOverTriggered = false;
     bool isResetNotification = false;
+    bool pendingBanSequence = false;
+
     DWORD notifyStartTime = 0;
     DWORD gameOverStartTime = 0;
 
@@ -234,18 +237,63 @@ private:
         return "lr_save_" + licensePlate + ".txt";
     }
 
+    void TriggerHandbrake() {
+        HWND hGame = FindWindowA(NULL, "Euro Truck Simulator 2");
+        if (!hGame) hGame = FindWindowA(NULL, "American Truck Simulator");
+
+        if (hGame) {
+            SetForegroundWindow(hGame);
+            SetFocus(hGame);
+            Sleep(50);
+        }
+
+        BYTE vk = VK_SPACE;
+        UINT scanCode = MapVirtualKeyA(vk, MAPVK_VK_TO_VSC);
+
+        INPUT inputs[2] = {};
+        inputs[0].type = INPUT_KEYBOARD;
+        inputs[0].ki.wVk = vk;
+        inputs[0].ki.wScan = scanCode;
+        inputs[0].ki.dwFlags = KEYEVENTF_SCANCODE;
+
+        inputs[1].type = INPUT_KEYBOARD;
+        inputs[1].ki.wVk = vk;
+        inputs[1].ki.wScan = scanCode;
+        inputs[1].ki.dwFlags = KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP;
+
+        SendInput(1, &inputs[0], sizeof(INPUT));
+        Sleep(200);
+        SendInput(1, &inputs[1], sizeof(INPUT));
+    }
+
     void CheckBanTrigger() {
         if (rules.isBanned && !gameOverTriggered) {
             gameOverTriggered = true;
-            gameOverStartTime = GetTickCount();
-            showOverlay = true;
-
-            Log(Strings::Log::BAN_TRIGGER);
+            pendingBanSequence = true;
+            Log(Strings::Log::BAN_Queued);
         }
     }
 
 public:
     static GameState& Instance() { static GameState i; return i; }
+
+    bool HasPendingBanSequence() {
+        std::lock_guard<std::mutex> lock(mtx);
+        return pendingBanSequence;
+    }
+
+    void PerformBanSequence() {
+        Log(Strings::Log::BAN_EXEC);
+        PlaySoundA(Config::SOUND_FILE, NULL, SND_FILENAME | SND_ASYNC | SND_NODEFAULT);
+        TriggerHandbrake();
+
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            showOverlay = true;
+            gameOverStartTime = GetTickCount();
+            pendingBanSequence = false;
+        }
+    }
 
     void Load() {
         std::string filename = GetSaveFileName();
@@ -288,10 +336,7 @@ public:
     void AddPoints(int amount, const std::string& reason) {
         {
             std::lock_guard<std::mutex> lock(mtx);
-            if (amount <= 0) {
-                Log("Fine detected but ignored (Points=0 in config): " + reason);
-                return;
-            }
+            if (amount <= 0) return;
 
             if (currentGameTime == 0) LogErr(Strings::Log::TIME_WARN);
             rules.AddPoints(amount, currentGameTime);
@@ -373,21 +418,32 @@ public:
             RECT rB = { 60,140,w - 60,h - 60 }; DrawTextA(hdc, Strings::UI::LEGAL_TEXT, -1, &rB, DT_CENTER | DT_WORDBREAK);
         }
         else {
-            RoundRectDraw(hdc, 0, 0, w, h, 6, Config::Colors::WARN_BG);
-            HBRUSH acc = CreateSolidBrush(Config::Colors::WARN_ACCENT);
-            RECT rA = { 0,h - 4,w,h }; FillRect(hdc, &rA, acc); DeleteObject(acc);
-            HPEN pen = CreatePen(PS_SOLID, 3, Config::Colors::WARN_ACCENT); SelectObject(hdc, pen); SelectObject(hdc, GetStockObject(NULL_BRUSH));
+            COLORREF bg = Config::Colors::WARN_BG;
+            COLORREF acc = Config::Colors::WARN_ACCENT;
+            const char* title = Strings::UI::FINE_TITLE;
+            std::string body = std::string(Strings::UI::FINE_BODY_PRE) + std::to_string(d.pts) + " / " + std::to_string(Config::LIMIT);
+
+            if (d.isReset) {
+                acc = RGB(0, 150, 255);
+                title = Strings::UI::RESET_TITLE;
+                body = Strings::UI::RESET_BODY;
+            }
+
+            RoundRectDraw(hdc, 0, 0, w, h, 6, bg);
+            HBRUSH bAcc = CreateSolidBrush(acc);
+            RECT rA = { 0,h - 4,w,h }; FillRect(hdc, &rA, bAcc); DeleteObject(bAcc);
+            HPEN pen = CreatePen(PS_SOLID, 3, acc); SelectObject(hdc, pen); SelectObject(hdc, GetStockObject(NULL_BRUSH));
             Ellipse(hdc, 25, (h - 44) / 2, 25 + 44, (h - 44) / 2 + 44); DeleteObject(pen);
-            SelectObject(hdc, hIcon); SetTextColor(hdc, Config::Colors::WARN_ACCENT);
-            RECT rI = { 25, (h - 44) / 2, 69, (h - 44) / 2 + 48 }; DrawTextA(hdc, "!", -1, &rI, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            SelectObject(hdc, hIcon); SetTextColor(hdc, acc);
+            RECT rI = { 25, (h - 44) / 2, 69, (h - 44) / 2 + 48 };
+            const char* iconChar = d.isReset ? "i" : "!";
+            DrawTextA(hdc, iconChar, -1, &rI, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
             static HFONT hS_T = F(21, 400, Config::FONT_NAME); static HFONT hS_B = F(19, 400, Config::FONT_NAME);
             int tx = 90, tw = w - 100;
             SelectObject(hdc, hS_T); SetTextColor(hdc, RGB(255, 255, 255));
-            std::string t = d.isReset ? Strings::UI::RESET_TITLE : Strings::UI::FINE_TITLE;
-            RECT r1 = { tx, 20, tx + tw, 50 }; DrawTextA(hdc, t.c_str(), -1, &r1, DT_LEFT | DT_TOP);
+            RECT r1 = { tx, 20, tx + tw, 50 }; DrawTextA(hdc, title, -1, &r1, DT_LEFT | DT_TOP);
             SelectObject(hdc, hS_B); SetTextColor(hdc, RGB(220, 220, 220));
-            std::string b = d.isReset ? Strings::UI::RESET_BODY : (std::string(Strings::UI::FINE_BODY_PRE) + std::to_string(d.pts) + " / " + std::to_string(Config::LIMIT));
-            RECT r2 = { tx, 50, tx + tw, 90 }; DrawTextA(hdc, b.c_str(), -1, &r2, DT_LEFT | DT_TOP | DT_WORDBREAK);
+            RECT r2 = { tx, 50, tx + tw, 90 }; DrawTextA(hdc, body.c_str(), -1, &r2, DT_LEFT | DT_TOP | DT_WORDBREAK);
         }
     }
 };
@@ -395,6 +451,8 @@ public:
 HWND hOverlayWnd = NULL;
 volatile bool g_running = true;
 Renderer g_renderer;
+HANDLE hThread = NULL;
+HANDLE hStopEvent = NULL; // New Event for Sync
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     if (uMsg == WM_PAINT) {
@@ -403,7 +461,15 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         auto data = GameState::Instance().GetSnapshot();
         if (data.show) {
             g_renderer.Draw(mdc, r.right, r.bottom, data);
-            if (data.isGameOver && data.msRemaining <= 200) { ShowWindow(hwnd, SW_HIDE); if (data.msRemaining <= 0) exit(0); }
+
+            // --- AUTO EXIT FEATURE ---
+            if (data.isGameOver && data.msRemaining <= 100) {
+                ShowWindow(hwnd, SW_HIDE);
+                // Self-terminate thread loop then close game
+                Log("GAME OVER TIME EXPIRED - CLOSING GAME");
+                Sleep(500);
+                TerminateProcess(GetCurrentProcess(), 0); // HARD KILL GAME
+            }
         }
         else {
             RECT clr = { 0,0,r.right,r.bottom }; HBRUSH b = CreateSolidBrush(0); FillRect(mdc, &clr, b); DeleteObject(b);
@@ -421,34 +487,70 @@ DWORD WINAPI OverlayThread(LPVOID) {
     hOverlayWnd = CreateWindowExA(WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW, CN, "LR", WS_POPUP, 0, 0, 100, 100, NULL, NULL, wc.hInstance, NULL);
     SetLayeredWindowAttributes(hOverlayWnd, 0, 255, LWA_ALPHA);
     MSG msg;
+
     while (g_running) {
+
+        // --- EVENT DRIVEN DELAY (Replaces Sleep) ---
+        // Waits 16ms OR returns immediately if Stop Event is set
+        if (WaitForSingleObject(hStopEvent, 16) == WAIT_OBJECT_0) {
+            break; // STOP IMMEDIATELY
+        }
+
+        if (GameState::Instance().HasPendingBanSequence()) {
+            GameState::Instance().PerformBanSequence();
+        }
+
         HWND hGame = FindWindowA(NULL, "Euro Truck Simulator 2");
         if (!hGame) hGame = FindWindowA(NULL, "American Truck Simulator");
-        if (!hGame) { Sleep(100); continue; }
+
+        if (!hGame || !IsWindow(hGame)) break;
+
+        if (IsIconic(hGame)) {
+            if (IsWindowVisible(hOverlayWnd)) ShowWindow(hOverlayWnd, SW_HIDE);
+            continue;
+        }
+
+        HWND hForeground = GetForegroundWindow();
+        if (hForeground != hGame && hForeground != hOverlayWnd) {
+            if (IsWindowVisible(hOverlayWnd)) ShowWindow(hOverlayWnd, SW_HIDE);
+            continue;
+        }
+
         auto d = GameState::Instance().GetSnapshot();
         if (d.show) {
             if (!IsWindowVisible(hOverlayWnd)) ShowWindow(hOverlayWnd, SW_SHOWNA);
-            RECT rGame; GetWindowRect(hGame, &rGame);
-            int gw = rGame.right - rGame.left, gh = rGame.bottom - rGame.top;
-            int w = d.isGameOver ? 900 : 450;
-            int h = d.isGameOver ? 540 : 110;
-            int tx = rGame.left + (gw - w) / 2;
-            int ty = d.isGameOver ? rGame.top + (gh - h) / 2 : rGame.top + 100;
-            SetWindowPos(hOverlayWnd, HWND_TOPMOST, tx, ty, w, h, SWP_NOACTIVATE);
-            InvalidateRect(hOverlayWnd, NULL, FALSE);
-            if (d.isGameOver) {
-                if (GetForegroundWindow() != hOverlayWnd) { SetForegroundWindow(hOverlayWnd); SetFocus(hOverlayWnd); SetCapture(hOverlayWnd); }
-                RECT cr; GetWindowRect(hOverlayWnd, &cr); ClipCursor(&cr);
+            RECT rGame;
+            if (GetWindowRect(hGame, &rGame)) {
+                int gw = rGame.right - rGame.left;
+                int gh = rGame.bottom - rGame.top;
+
+                if (gw < 100 || gh < 100) {
+                    ShowWindow(hOverlayWnd, SW_HIDE);
+                    break;
+                }
+
+                int w = d.isGameOver ? 900 : 450;
+                int h = d.isGameOver ? 540 : 110;
+                int tx = rGame.left + (gw - w) / 2;
+                int ty = d.isGameOver ? rGame.top + (gh - h) / 2 : rGame.top + 100;
+                SetWindowPos(hOverlayWnd, HWND_TOPMOST, tx, ty, w, h, SWP_NOACTIVATE);
+                InvalidateRect(hOverlayWnd, NULL, FALSE);
+
+                if (d.isGameOver) {
+                    if (GetForegroundWindow() != hOverlayWnd) { SetForegroundWindow(hOverlayWnd); SetFocus(hOverlayWnd); SetCapture(hOverlayWnd); }
+                    RECT cr; GetWindowRect(hOverlayWnd, &cr); ClipCursor(&cr);
+                }
+                else ClipCursor(NULL);
             }
-            else ClipCursor(NULL);
         }
         else {
             if (IsWindowVisible(hOverlayWnd)) ShowWindow(hOverlayWnd, SW_HIDE);
             ClipCursor(NULL);
         }
         while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessageA(&msg); }
-        Sleep(16);
     }
+
+    if (hOverlayWnd) DestroyWindow(hOverlayWnd);
     UnregisterClassA(CN, GetModuleHandle(NULL));
     return 0;
 }
@@ -474,16 +576,35 @@ SCSAPI_VOID t_game(const scs_event_t, const void* i, const scs_context_t) {
 
 SCSAPI_RESULT scs_telemetry_init(const scs_u32_t version, const scs_telemetry_init_params_t* p) {
     auto v = (const scs_telemetry_init_params_v100_t*)p; game_log = v->common.log; g_running = true;
-
     Config::Load();
-
     Log(Strings::Log::INIT);
     if (v->register_for_channel("game.time", Config::SCS_U32_NIL, SCS_VALUE_TYPE_u32, Config::CHANNEL_FLAG_NONE, t_time, nullptr) != SCS_RESULT_ok) LogErr(Strings::Log::CHANNEL_FAIL);
     else Log(Strings::Log::CHANNEL_OK);
-
     v->register_for_event(SCS_TELEMETRY_EVENT_configuration, t_conf, 0);
     v->register_for_event(SCS_TELEMETRY_EVENT_gameplay, t_game, 0);
-    CreateThread(0, 0, OverlayThread, 0, 0, 0);
+
+    // Create Event for Sync
+    hStopEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+    hThread = CreateThread(0, 0, OverlayThread, 0, 0, 0);
     return SCS_RESULT_ok;
 }
-SCSAPI_VOID scs_telemetry_shutdown(void) { g_running = false; Sleep(50); if (hOverlayWnd) ShowWindow(hOverlayWnd, SW_HIDE); GameState::Instance().Save(); }
+
+SCSAPI_VOID scs_telemetry_shutdown(void) {
+    // 1. Trigger Event (Wake up thread immediately)
+    if (hStopEvent) SetEvent(hStopEvent);
+    g_running = false;
+
+    // 2. Hide immediately
+    if (hOverlayWnd) ShowWindow(hOverlayWnd, SW_HIDE);
+
+
+    // 3. Wait for clean exit
+    if (hThread) {
+        WaitForSingleObject(hThread, 1000);
+        CloseHandle(hThread);
+    }
+
+    if (hStopEvent) CloseHandle(hStopEvent);
+
+    GameState::Instance().Save();
+}

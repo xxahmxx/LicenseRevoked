@@ -4,8 +4,10 @@
 *.suo
 *.ups
 *.sln.docstates
+*.aps
 
 # --- Build results (Binaries & Object files) ---
+# Ignorujemy foldery z plikami binarnymi kompilacji
 x64/
 Debug/
 Release/
@@ -25,6 +27,16 @@ obj/
 *.dll
 *.exe
 
-# --- Windows system files ---
+# --- Nasze Automatyczne Wydania (Custom Scripts) ---
+# Ignorujemy folder, w którym skrypt tworzy ZIP-y i archiwalne DLL
+Releases/
+# Ignorujemy foldery tymczasowe tworzone podczas pakowania
+tozip/
+TempPackage/
+
+# --- Pliki tymczasowe i backupy ---
+*.bak
+*.log
+*.tmp
 Thumbs.db
 Desktop.ini
